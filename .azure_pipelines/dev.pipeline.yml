@@ -1,0 +1,24 @@
+name: dev_pipeline
+
+pool: test_project
+
+trigger:
+  batch: true
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - '/environmets/dev.terraform.tfvars'
+
+variables:
+  my_dir: '$(System.DefaultWorkingDirectory)/environments'
+  backendServiceArm: 'azure-devops'
+  backendAzureRmResourceGroupName: 'rg-test-backend-config'
+  backendAzureRmStorageAccountName: 'strgtestbackendconfig01'
+  backendAzureRmContainerName: 'contianer-strgtestbackendconfig01'
+
+stages:
+  - template: './common.template.yml'
+    parameters:
+      environments: 'dev'

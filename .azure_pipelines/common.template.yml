@@ -1,0 +1,143 @@
+parameters:
+  - name: environments
+
+stages:
+- stage: testing
+  displayName: testing_stage
+  jobs:
+  - job: tfsec
+    displayName: tfsec_scan
+    condition: Always()
+    continueOnError: true
+    steps:
+    - task: tfsec@1
+      inputs:
+        version: 'v1.26.0'
+        debug: true
+        args: '--tfvars-file="environments/${{ parameters.environments }}.terraform.tfvars"'
+        dir: '$(System.DefaultWorkingDirectory)'
+    
+  - job: checkov
+    displayName: checkov_scan
+    condition: Always()
+    continueOnError: true
+    dependsOn: tfsec
+    steps:
+    - task: CmdLine@2
+      displayName: checkov_scan
+      inputs:
+        script: 'checkov -d . -o junitxml > checkov_scan.xml'
+        workingDirectory: '$(System.DefaultWorkingDirectory)'
+      
+    - task: PublishTestResults@2
+      displayName: checkov test results
+      condition: Always()
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: 'checkov_scan.xml'
+        testRunTitle: 'checkov_scan'
+    
+  - job: tflint
+    displayName: tflint_scan
+    condition: Always()
+    continueOnError: true
+    dependsOn: checkov
+    steps:
+    - task: CmdLine@2
+      displayName: tflint_scan
+      inputs:
+        script: 'tflint --chdir=. --recursive -f junit > tflint_scan.xml'
+        workingDirectory: '$(System.DefaultWorkingDirectory)'
+    
+    - task: PublishTestResults@2
+      displayName: tflint test results
+      condition: Always()
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: 'tflint_scan.xml'
+        testRunTitle: 'tflint_scan'
+
+- stage: intiallizeTerroform
+  displayName: intiallize_terraform
+  jobs:
+  - job: terraformInitPlan
+    displayName: terraform_init & terraform_plan
+    steps:
+    - task: TerraformTaskV4@4
+      displayName: terraform_init
+      inputs:
+        provider: 'azurerm'
+        command: 'init'
+        workingDirectory: '$(my_dir)'
+        backendServiceArm: '$(backendServiceArm)'
+        backendAzureRmResourceGroupName: '$(backendAzureRmResourceGroupName)'
+        backendAzureRmStorageAccountName: '$(backendAzureRmStorageAccountName)'
+        backendAzureRmContainerName: '$(backendAzureRmContainerName)'
+        backendAzureRmKey: '${{ parameters.environments }}. terraform.tfstate'
+
+    - task: TerraformTaskV4@4
+      displayName: terraform_validate
+      inputs:
+        provider: 'azurerm'
+        command: 'validate'
+        workingDirectory: '$(my_dir)'
+
+    - task: TerraformTaskV4@4
+      displayName: terraform_plan
+      inputs:
+        provider: 'azurerm'
+        command: 'plan'
+        workingDirectory: '$(my_dir)'
+        commandOptions: '--var-file="${{ parameters.environments }}.terraform.tfvars"'
+        environmentServiceNameAzureRM: '$(backendServiceArm)'
+
+- stage: ManualValidation
+  displayName: Manual Validation
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  jobs:
+  - job: manualvalidation
+    displayName: Manual Validation
+    pool: server
+    timeoutInMinutes: 10
+    steps:
+    - task: ManualValidation@1
+      displayName: manual_validation
+      inputs:
+        notifyUsers: 'msoftazure9@gmail.com'
+        approvers: 'msoftazure9@gmail.com'
+        allowApproversToApproveTheirOwnRuns: true
+        onTimeout: 'resume'
+
+- stage: deploymentTerraform
+  displayName: deployment_terraform
+  jobs:
+  - job: terraformInitApply
+    displayName: terraform_init & terraform_apply
+    steps:
+    - task: TerraformTaskV4@4
+      displayName: terraform_init
+      inputs:
+        provider: 'azurerm'
+        command: 'init'
+        workingDirectory: '$(my_dir)'
+        backendServiceArm: '$(backendServiceArm)'
+        backendAzureRmResourceGroupName: '$(backendAzureRmResourceGroupName)'
+        backendAzureRmStorageAccountName: '$(backendAzureRmStorageAccountName)'
+        backendAzureRmContainerName: '$(backendAzureRmContainerName)'
+        backendAzureRmKey: '${{ parameters.environments }}. terraform.tfstate'
+
+    - task: TerraformTaskV4@4
+      displayName: terraform_validate
+      inputs:
+        provider: 'azurerm'
+        command: 'validate'
+        workingDirectory: '$(my_dir)'
+
+    - task: TerraformTaskV4@4
+      displayName: terraform_apply
+      inputs:
+        provider: 'azurerm'
+        command: 'apply'
+        workingDirectory: '$(my_dir)'
+        commandOptions: '--var-file="${{ parameters.environments }}.terraform.tfvars"'
+        environmentServiceNameAzureRM: '$(backendServiceArm)'       
